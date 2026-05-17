@@ -8,7 +8,7 @@ import time
 PLC_IP = '192.168.0.1' # IP mặc định hoặc IP bạn đã đặt cho S7-1200
 client = ModbusTcpClient(PLC_IP, port=502)
 
-print("--- HỆ THỐNG PHÂN LOẠI HÀNG HÓA - TIẾN ANH HUST ---")
+print("--- HỆ THỐNG LƯU KHO TỰ ĐỘNG ---")
 print(f"Đang thử kết nối tới PLC tại địa chỉ: {PLC_IP}...")
 
 # Cố gắng kết nối
@@ -53,42 +53,59 @@ cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
 while True:
     success, frame = cap.read()
     if not success: break
-
     qr_codes = decode(frame)
 
-    # Nếu không thấy mã QR nào -> Reset trạng thái để nhận diện lại vật tiếp theo
+    # 1. Không thấy mã QR nào -> Reset trạng thái
     if len(qr_codes) == 0:
         last_qr_content = None 
     
-    else:
+    # 2. Phát hiện NHIỀU HƠN 1 mã QR cùng lúc
+    elif len(qr_codes) > 1:
+        # Vẫn vẽ khung cảnh báo (màu đỏ) cho tất cả mã QR trên màn hình
         for code in qr_codes:
-            content = code.data.decode('utf-8')
-
-            # LUÔN VẼ KHUNG XANH ĐỂ GIÁM SÁT
             pts = np.array([code.polygon], np.int32).reshape((-1, 1, 2))
-            cv2.polylines(frame, [pts], True, (0, 255, 0), 3)
-            cv2.putText(frame, content, (code.rect.left, code.rect.top - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            cv2.polylines(frame, [pts], True, (0, 0, 255), 3) # Đổi sang khung đỏ cảnh báo
+            cv2.putText(frame, "LOI: NHIEU QR", (code.rect.left, code.rect.top - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        
+        # Chỉ gửi tín hiệu 98 và in ra log nếu trạng thái trước đó chưa ghi nhận lỗi này (tránh spam)
+        if last_qr_content != "MULTIPLE_QR":
+            print(f"\n[CẢNH BÁO] Phát hiện {len(qr_codes)} mã QR cùng lúc trên camera!")
+            send_to_plc(98)
+            last_qr_content = "MULTIPLE_QR" # Cập nhật trạng thái
+            
+    # 3. Chỉ có CHÍNH XÁC 1 mã QR (xử lý bình thường)
+    else:
+        code = qr_codes[0] # Lấy mã QR duy nhất
+        content = code.data.decode('utf-8')
 
-            # CHỈ IN TERMINAL VÀ GỬI PLC KHI LÀ VẬT MỚI
-            if content != last_qr_content:
-                print(f"\n[PHÁT HIỆN] Nội dung mã: {content}")
-                last_qr_content = content 
+        # LUÔN VẼ KHUNG XANH ĐỂ GIÁM SÁT
+        pts = np.array([code.polygon], np.int32).reshape((-1, 1, 2))
+        cv2.polylines(frame, [pts], True, (0, 255, 0), 3)
+        cv2.putText(frame, content, (code.rect.left, code.rect.top - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
 
-                # Phân loại
-                if content == "mã hàng 1":
-                    send_to_plc(1)
-                elif content == "mã hàng 2":
-                    send_to_plc(2)
-                elif content == "mã hàng 3":
-                    send_to_plc(3)
-                elif content == "mã hàng 4":
-                    send_to_plc(4)
-                else:
-                    send_to_plc(99) # Mã hàng lạ
+        # CHỈ IN TERMINAL VÀ GỬI PLC KHI LÀ VẬT MỚI
+        if content != last_qr_content:
+            print(f"\n[PHÁT HIỆN] Nội dung mã: {content}")
+            last_qr_content = content 
+
+            # Phân loại
+            if content == "mã hàng 1":
+                send_to_plc(1)
+            elif content == "mã hàng 2":
+                send_to_plc(2)
+            elif content == "mã hàng 3":
+                send_to_plc(3)
+            elif content == "mã hàng 4":
+                send_to_plc(4)
+            else:
+                send_to_plc(99) # Mã hàng lạ
 
     # Hiển thị cửa sổ Camera
-    cv2.imshow('DO AN TOT NGHIEP - TIEN ANH', frame)
+    cv2.imshow('DO AN TOT NGHIEP', frame)
+    
+    # ... [phần cv2.waitKey và ngắt kết nối phía dưới giữ nguyên] ...
 
     # Nhấn 'q' để dừng (tần số quét 10Hz để tiết kiệm CPU)
     if cv2.waitKey(100) & 0xFF == ord('q'):
